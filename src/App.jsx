@@ -1646,7 +1646,9 @@ import {
   updateDoc,
   deleteDoc,
   onSnapshot,
-  query
+  query,
+  getDocs,
+  where
 } from 'firebase/firestore';
 import {
   signInAnonymously,
@@ -1752,6 +1754,30 @@ export default function App() {
   };
 
   // --- AUTH LISTENER ---
+  // useEffect(() => {
+  //   // Attempt initial anonymous sign-in if not logged in
+  //   const initAuth = async () => {
+  //     if (!auth.currentUser) {
+  //       await signInAnonymously(auth).catch(console.error);
+  //     }
+  //   };
+  //   initAuth();
+
+  //   const unsubscribe = onAuthStateChanged(auth, (u) => {
+  //     setUser(u);
+  //     setAuthLoading(false);
+      
+  //     // LOGIC: If user is logged in and NOT anonymous, they are Admin.
+  //     if (u && !u.isAnonymous) {
+  //       setIsAdmin(true);
+  //     } else {
+  //       setIsAdmin(false);
+  //     }
+  //   });
+
+  //   return () => unsubscribe();
+  // }, []);
+// --- AUTH LISTENER ---
   useEffect(() => {
     // Attempt initial anonymous sign-in if not logged in
     const initAuth = async () => {
@@ -1761,21 +1787,42 @@ export default function App() {
     };
     initAuth();
 
-    const unsubscribe = onAuthStateChanged(auth, (u) => {
+    const unsubscribe = onAuthStateChanged(auth, async (u) => {
       setUser(u);
       setAuthLoading(false);
       
-      // LOGIC: If user is logged in and NOT anonymous, they are Admin.
+      // LOGIC: Check if user is logged in and NOT anonymous
       if (u && !u.isAnonymous) {
-        setIsAdmin(true);
+        try {
+          // 1. Search the "users" collection for this person's email
+          const usersRef = collection(db, "users");
+          const q = query(usersRef, where("email", "==", u.email));
+          const querySnapshot = await getDocs(q);
+          
+          let userIsAdmin = false;
+          
+          // 2. Loop through results (should only be one) and check the role
+          querySnapshot.forEach((doc) => {
+            if (doc.data().role === "admin") {
+              userIsAdmin = true;
+            }
+          });
+          
+          // 3. Set admin status based on what we found in Firestore
+          setIsAdmin(userIsAdmin); 
+          
+        } catch (error) {
+          console.error("Error fetching user role:", error);
+          setIsAdmin(false); // Default to regular viewer if something goes wrong
+        }
       } else {
+        // Anonymous users are never admins
         setIsAdmin(false);
       }
     });
 
     return () => unsubscribe();
   }, []);
-
 
   // --- FIRESTORE LISTENERS ---
   useEffect(() => {
