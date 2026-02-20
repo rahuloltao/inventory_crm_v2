@@ -1663,7 +1663,7 @@ import {
 import { auth, db } from "./firebase";
 
 // --- CONFIGURATION ---
-const appId = "crm_prod_v1"; 
+const appId = "crm_prod_v1";
 
 // --- INITIAL STATE ---
 const INITIAL_PARTS = [];
@@ -1716,7 +1716,7 @@ export default function App() {
   const [selectedDate, setSelectedDate] = useState(null);
 
   // --- AUTHENTICATION HANDLERS ---
-  
+
   // 1. Google Login
   const handleGoogleLogin = async () => {
     const provider = new GoogleAuthProvider();
@@ -1753,29 +1753,29 @@ export default function App() {
     }
   };
 
-// --- AUTH LISTENER ---
+  // --- AUTH LISTENER ---
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (u) => {
-      
+
       if (u) {
         // 1. A user is logged in (either Google, Email, or Anonymous)
         setUser(u);
-        
+
         if (!u.isAnonymous) {
           // 2. If they are a real user, check if they are an Admin
           try {
             const usersRef = collection(db, "users");
             const q = query(usersRef, where("email", "==", u.email));
             const querySnapshot = await getDocs(q);
-            
+
             let userIsAdmin = false;
             querySnapshot.forEach((doc) => {
               if (doc.data().role === "admin") {
                 userIsAdmin = true;
               }
             });
-            
-            setIsAdmin(userIsAdmin); 
+
+            setIsAdmin(userIsAdmin);
           } catch (error) {
             console.error("Error fetching user role:", error);
             setIsAdmin(false);
@@ -1784,9 +1784,9 @@ export default function App() {
           // Anonymous users are never admins
           setIsAdmin(false);
         }
-        
+
         // 3. Stop the loading spinner once we have resolved the user and their role
-        setAuthLoading(false); 
+        setAuthLoading(false);
 
       } else {
         // 4. If 'u' is null, Firebase confirms there is NO saved session.
@@ -1880,7 +1880,7 @@ export default function App() {
       // Year
       if (!byYear[y]) byYear[y] = 0;
       byYear[y] += order.total;
-      
+
       // Month
       if (parseInt(y) === selectedYear) {
         byMonth[parseInt(m) - 1] += order.total;
@@ -2150,8 +2150,8 @@ export default function App() {
     <button
       onClick={() => { setActiveTab(id); setSelectedProduct(null); }}
       className={`w-full flex items-center space-x-3 px-6 py-4 transition-colors ${activeTab === id
-          ? 'bg-blue-50 text-blue-600 border-r-4 border-blue-600'
-          : 'text-slate-500 hover:bg-slate-50 hover:text-slate-900'
+        ? 'bg-blue-50 text-blue-600 border-r-4 border-blue-600'
+        : 'text-slate-500 hover:bg-slate-50 hover:text-slate-900'
         }`}
     >
       <Icon size={20} />
@@ -2201,7 +2201,7 @@ export default function App() {
             {salesData.byMonth.map((total, idx) => (
               <button key={idx} onClick={() => { setSelectedMonth(idx); setSalesView('month'); }} className={`p-4 rounded-xl border text-left transition-all ${total > 0 ? 'bg-blue-50 border-blue-200 hover:shadow-md' : 'bg-slate-50 border-slate-100 opacity-60'}`}>
                 <span className="text-xs font-bold text-slate-500 uppercase block mb-1">{monthNames[idx]}</span>
-                <span className={`text-lg font-bold ${total > 0 ? 'text-blue-700' : 'text-slate-400'}`}>${total.toLocaleString()}</span>
+                <span className={`text-lg font-bold ${total > 0 ? 'text-blue-700' : 'text-slate-400'}`}>₹{total.toLocaleString('en-IN')}</span>
               </button>
             ))}
           </div>
@@ -2211,7 +2211,7 @@ export default function App() {
             {Object.keys(salesData.byDay).sort().map(dateStr => (
               <button key={dateStr} onClick={() => { setSelectedDate(dateStr); setSalesView('day'); }} className="w-full flex justify-between items-center p-3 hover:bg-blue-50 rounded-lg group transition-colors border border-transparent hover:border-blue-100">
                 <div className="flex items-center gap-3"><div className="bg-blue-100 text-blue-700 font-bold text-xs p-2 rounded-md w-12 text-center">{dateStr.split('-')[2]}</div><span className="text-sm font-medium text-slate-700">{dateStr}</span></div>
-                <div className="flex items-center gap-4"><span className="text-xs text-slate-400">{salesData.byDay[dateStr].orders.length} orders</span><span className="text-sm font-bold text-slate-900">${salesData.byDay[dateStr].total.toFixed(2)}</span><ChevronRight size={16} className="text-slate-300 group-hover:text-blue-500" /></div>
+                <div className="flex items-center gap-4"><span className="text-xs text-slate-400">{salesData.byDay[dateStr].orders.length} orders</span><span className="text-sm font-bold text-slate-900">₹{salesData.byDay[dateStr].total.toFixed(2)}</span><ChevronRight size={16} className="text-slate-300 group-hover:text-blue-500" /></div>
               </button>
             ))}
           </div>
@@ -2222,7 +2222,7 @@ export default function App() {
               <thead className="bg-slate-50 text-xs uppercase font-semibold text-slate-500"><tr><th className="px-4 py-2">Customer</th><th className="px-4 py-2">Items</th><th className="px-4 py-2 text-right">Amount</th></tr></thead>
               <tbody className="divide-y divide-slate-100">
                 {salesData.byDay[selectedDate].orders.map(order => (
-                  <tr key={order.id}><td className="px-4 py-3 font-medium text-slate-900">{order.customer}</td><td className="px-4 py-3">{order.items.map((i, idx) => <div key={idx} className="flex items-center gap-2"><span className={`w-1.5 h-1.5 rounded-full ${i.type === 'product' ? 'bg-indigo-500' : 'bg-orange-500'}`}></span><span className="text-xs text-slate-500">{i.qty}x {i.name}</span></div>)}</td><td className="px-4 py-3 text-right font-mono">${order.total.toFixed(2)}</td></tr>
+                  <tr key={order.id}><td className="px-4 py-3 font-medium text-slate-900">{order.customer}</td><td className="px-4 py-3">{order.items.map((i, idx) => <div key={idx} className="flex items-center gap-2"><span className={`w-1.5 h-1.5 rounded-full ${i.type === 'product' ? 'bg-indigo-500' : 'bg-orange-500'}`}></span><span className="text-xs text-slate-500">{i.qty}x {i.name}</span></div>)}</td><td className="px-4 py-3 text-right font-mono">₹{order.total.toFixed(2)}</td></tr>
                 ))}
               </tbody>
             </table>
@@ -2236,7 +2236,7 @@ export default function App() {
     <div className="p-8 space-y-8 animate-in fade-in duration-500 max-w-7xl mx-auto">
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
         {[
-          { label: 'Total Inventory Value', val: `$${parts.reduce((acc, p) => acc + (p.stock * p.cost), 0).toLocaleString()}`, icon: TrendingUp, color: 'blue' },
+          { label: 'Total Inventory Value', val: `₹${parts.reduce((acc, p) => acc + (p.stock * p.cost), 0).toLocaleString('en-IN')}`, icon: TrendingUp, color: 'blue' },
           { label: 'Ready to Build', val: `${products.filter(p => getProductAvailability(p.id).isBuildable).length} Products`, icon: Package, color: 'emerald' },
           { label: 'Low Stock Parts', val: `${parts.filter(p => p.stock < p.minStock).length} Items`, icon: AlertCircle, color: 'rose' },
           { label: 'Total Orders', val: orders.length, icon: ShoppingCart, color: 'indigo' }
@@ -2326,7 +2326,7 @@ export default function App() {
         <div className="bg-slate-50 rounded-2xl border border-slate-200 p-6 h-fit sticky top-6">
           {selectedProduct ? (
             <div className="animate-in slide-in-from-right-4 duration-300">
-              <h3 className="text-xl font-bold text-slate-900 mb-4">{selectedProduct.name} <span className="text-sm font-normal text-slate-500">(${selectedProduct.price})</span></h3>
+              <h3 className="text-xl font-bold text-slate-900 mb-4">{selectedProduct.name} <span className="text-sm font-normal text-slate-500">(₹{selectedProduct.price})</span></h3>
               <div className="bg-white rounded-xl border border-slate-200 overflow-hidden mb-6">
                 <div className="bg-slate-100 px-4 py-2 border-b border-slate-200"><h4 className="font-semibold text-slate-700 text-sm">Bill of Materials</h4></div>
                 <div className="divide-y divide-slate-100">
@@ -2364,7 +2364,7 @@ export default function App() {
               <tr key={order.id} className="hover:bg-slate-50 group">
                 <td className="px-6 py-4"><div className="font-medium text-slate-900">{order.customer}</div><div className="text-xs text-slate-400">#{order.id}</div></td>
                 <td className="px-6 py-4">{order.items.map((item, idx) => <div key={idx} className="flex items-center gap-2"><span className={`w-1.5 h-1.5 rounded-full ${item.type === 'product' ? 'bg-indigo-500' : 'bg-orange-500'}`}></span>{item.qty}x {item.name}</div>)}</td>
-                <td className="px-6 py-4 text-right font-mono font-medium">${order.total.toFixed(2)}</td>
+                <td className="px-6 py-4 text-right font-mono font-medium">₹{order.total.toFixed(2)}</td>
                 <td className="px-6 py-4 text-center">{isAdmin && <div className="flex justify-center gap-2 opacity-0 group-hover:opacity-100"><button onClick={() => { setEditingOrder(order); setShowEditOrder(true); }} className="p-1.5 hover:bg-blue-50 text-blue-600 rounded"><Edit3 size={16} /></button><button onClick={() => setDeleteConfig({ type: 'order', id: order.id, name: 'Order', data: order })} className="p-1.5 hover:bg-rose-50 text-rose-600 rounded"><Trash2 size={16} /></button></div>}</td>
               </tr>
             ))}
@@ -2433,7 +2433,7 @@ export default function App() {
       </div>
 
       {/* --- MODALS --- */}
-      
+
       {/* LOGIN MODAL */}
       <Modal title="Sign In" show={showLoginModal} onClose={() => setShowLoginModal(false)}>
         <div className="space-y-4">
@@ -2474,7 +2474,7 @@ export default function App() {
         <form onSubmit={handleCreateOrder} className="space-y-4">
           <div className="flex gap-2 p-1 bg-slate-100 rounded-lg"><button type="button" onClick={() => setOrderType('product')} className={`flex-1 py-1.5 text-sm font-medium rounded-md transition-all ${orderType === 'product' ? 'bg-white shadow-sm text-blue-600' : 'text-slate-500'}`}>Product</button><button type="button" onClick={() => setOrderType('part')} className={`flex-1 py-1.5 text-sm font-medium rounded-md transition-all ${orderType === 'part' ? 'bg-white shadow-sm text-blue-600' : 'text-slate-500'}`}>Part</button></div>
           <div><label className="block text-sm font-medium text-slate-700 mb-1">Customer</label><input required name="customer" className="w-full rounded-lg border-slate-300 py-2 px-3" /></div>
-          <div><label className="block text-sm font-medium text-slate-700 mb-1">Select Item</label><select name="itemId" className="w-full rounded-lg border-slate-300 py-2 px-3">{orderType === 'product' ? products.map(p => <option key={p.id} value={p.id} disabled={!getProductAvailability(p.id).isBuildable}>{p.name} (${p.price})</option>) : parts.map(p => <option key={p.id} value={p.id} disabled={p.stock === 0}>{p.name}</option>)}</select></div>
+          <div><label className="block text-sm font-medium text-slate-700 mb-1">Select Item</label><select name="itemId" className="w-full rounded-lg border-slate-300 py-2 px-3">{orderType === 'product' ? products.map(p => <option key={p.id} value={p.id} disabled={!getProductAvailability(p.id).isBuildable}>{p.name} (₹{p.price})</option>) : parts.map(p => <option key={p.id} value={p.id} disabled={p.stock === 0}>{p.name}</option>)}</select></div>
           <div><label className="block text-sm font-medium text-slate-700 mb-1">Quantity</label><input required name="quantity" type="number" min="1" className="w-full rounded-lg border-slate-300 py-2 px-3" defaultValue="1" /></div>
           <button type="submit" className="w-full bg-blue-600 hover:bg-blue-700 text-white font-medium py-2.5 rounded-lg mt-2">Confirm Order</button>
         </form>
