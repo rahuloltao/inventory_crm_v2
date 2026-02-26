@@ -1606,6 +1606,7 @@
 //   );
 // }
 
+import brandLogo from './assets/logo-black.png'; // Change 'logo.png' to your exact file name
 import React, { useState, useEffect, useMemo } from 'react';
 import {
   LayoutDashboard,
@@ -2402,9 +2403,20 @@ export default function App() {
 
   return (
     <div className="flex h-screen bg-slate-50 font-sans text-slate-900 selection:bg-blue-100">
-      {/* SIDEBAR */}
+{/* SIDEBAR */}
       <div className={`${isSidebarOpen ? 'w-64' : 'w-20'} bg-white border-r border-slate-200 transition-all duration-300 flex flex-col z-20`}>
-        <div className="p-6 flex items-center gap-3"><div className="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center text-white shrink-0"><Box size={20} /></div>{isSidebarOpen && <span className="font-bold text-lg tracking-tight">InvCRM</span>}</div>
+        
+        {/* --- UPDATED HEADER START --- */}
+        <div className="p-6 flex items-center gap-3">
+          <img 
+            src={brandLogo} 
+            alt="Brand Logo" 
+            className="w-8 h-8 rounded-md object-cover shrink-0" 
+          />
+          {isSidebarOpen && <span className="font-bold text-lg tracking-tight">InvCRM</span>}
+        </div>
+        {/* --- UPDATED HEADER END --- */}
+
         <nav className="flex-1 py-6 space-y-1">
           <SidebarItem id="dashboard" icon={LayoutDashboard} label={isSidebarOpen ? "Dashboard" : ""} />
           <SidebarItem id="products" icon={Package} label={isSidebarOpen ? "Products" : ""} />
@@ -2412,6 +2424,7 @@ export default function App() {
           <SidebarItem id="orders" icon={Users} label={isSidebarOpen ? "Orders" : ""} />
           {isAdmin && <SidebarItem id="trash" icon={Trash2} label={isSidebarOpen ? "Trash" : ""} />}
         </nav>
+        
         <div className={`p-4 ${isSidebarOpen ? 'block' : 'hidden'} space-y-2`}>
           <div className="bg-indigo-50 text-indigo-700 text-xs p-3 rounded-lg border border-indigo-100 flex items-center gap-2"><Cloud size={14} /><span>Synced</span></div>
           {isAdmin ? (
@@ -2420,6 +2433,7 @@ export default function App() {
             <button onClick={() => setShowLoginModal(true)} className="w-full text-xs p-3 rounded-lg border flex items-center gap-2 transition-colors bg-slate-50 text-slate-600 border-slate-200 hover:bg-blue-50 hover:text-blue-600 hover:border-blue-200"><LogIn size={14} /><span>Sign In (Admin)</span></button>
           )}
         </div>
+        
         <div className="p-4 border-t border-slate-100"><button onClick={() => setIsSidebarOpen(!isSidebarOpen)} className="p-2 rounded-lg hover:bg-slate-100 text-slate-500 w-full flex justify-center">{isSidebarOpen ? <ChevronRight className="rotate-180" /> : <ChevronRight />}</button></div>
       </div>
 
