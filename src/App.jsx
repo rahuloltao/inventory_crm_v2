@@ -2403,17 +2403,18 @@ export default function App() {
 
   return (
     <div className="flex h-screen bg-slate-50 font-sans text-slate-900 selection:bg-blue-100">
-{/* SIDEBAR */}
+      {/* SIDEBAR */}
       <div className={`${isSidebarOpen ? 'w-64' : 'w-20'} bg-white border-r border-slate-200 transition-all duration-300 flex flex-col z-20`}>
-        
-        {/* --- UPDATED HEADER START --- */}
+
+{/* --- UPDATED HEADER START --- */}
         <div className="p-6 flex items-center gap-3">
-          <img 
-            src={brandLogo} 
-            alt="Brand Logo" 
-            className="w-8 h-8 rounded-md object-cover shrink-0" 
+          <img
+            src={brandLogo}
+            alt="Brand Logo"
+            // object-contain stops the cropping. 
+            // The width changes from w-32 (wide) to w-8 (small) based on the sidebar state.
+            className={`${isSidebarOpen ? 'w-32' : 'w-8'} h-8 object-contain transition-all duration-300 shrink-0`}
           />
-          {isSidebarOpen && <span className="font-bold text-lg tracking-tight">InvCRM</span>}
         </div>
         {/* --- UPDATED HEADER END --- */}
 
@@ -2424,7 +2425,7 @@ export default function App() {
           <SidebarItem id="orders" icon={Users} label={isSidebarOpen ? "Orders" : ""} />
           {isAdmin && <SidebarItem id="trash" icon={Trash2} label={isSidebarOpen ? "Trash" : ""} />}
         </nav>
-        
+
         <div className={`p-4 ${isSidebarOpen ? 'block' : 'hidden'} space-y-2`}>
           <div className="bg-indigo-50 text-indigo-700 text-xs p-3 rounded-lg border border-indigo-100 flex items-center gap-2"><Cloud size={14} /><span>Synced</span></div>
           {isAdmin ? (
@@ -2433,17 +2434,29 @@ export default function App() {
             <button onClick={() => setShowLoginModal(true)} className="w-full text-xs p-3 rounded-lg border flex items-center gap-2 transition-colors bg-slate-50 text-slate-600 border-slate-200 hover:bg-blue-50 hover:text-blue-600 hover:border-blue-200"><LogIn size={14} /><span>Sign In (Admin)</span></button>
           )}
         </div>
-        
+
         <div className="p-4 border-t border-slate-100"><button onClick={() => setIsSidebarOpen(!isSidebarOpen)} className="p-2 rounded-lg hover:bg-slate-100 text-slate-500 w-full flex justify-center">{isSidebarOpen ? <ChevronRight className="rotate-180" /> : <ChevronRight />}</button></div>
       </div>
 
       {/* MAIN CONTENT */}
-      <div className="flex-1 overflow-auto bg-slate-50/50">
-        {activeTab === 'dashboard' && <DashboardView />}
-        {activeTab === 'products' && <ProductsView />}
-        {activeTab === 'parts' && <PartsView />}
-        {activeTab === 'orders' && <OrdersView />}
-        {activeTab === 'trash' && <TrashView />}
+      {/* Added flex flex-col to the main container so we can push the footer down */}
+      <div className="flex-1 overflow-auto bg-slate-50/50 flex flex-col">
+        
+        {/* Wrapped your views in a div that takes up all available space (flex-1) */}
+        <div className="flex-1">
+          {activeTab === 'dashboard' && <DashboardView />}
+          {activeTab === 'products' && <ProductsView />}
+          {activeTab === 'parts' && <PartsView />}
+          {activeTab === 'orders' && <OrdersView />}
+          {activeTab === 'trash' && <TrashView />}
+        </div>
+
+        {/* --- ADDED FOOTER --- */}
+        {/* mt-auto pushes this to the bottom of the flex column */}
+        <footer className="py-4 mt-auto text-center text-xs text-slate-400 border-t border-slate-200">
+          Developed by <span className="font-semibold text-slate-500">Rahul</span>
+        </footer>
+
       </div>
 
       {/* --- MODALS --- */}
