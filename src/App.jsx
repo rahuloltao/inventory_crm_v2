@@ -1916,32 +1916,43 @@ export default function App() {
   const downloadCatalogTemplate = () => {
     const rows = [
       {
-        Type: 'part',
-        'Part SKU': 'PART-BASE-001',
-        'Part Name': 'Packing Box',
-        'Part Stock': 250,
-        'Part Min Stock': 25,
-        'Part Cost': 12,
-        'Product SKU': '',
-        'Product Name': '',
-        'Product Price': '',
-        'Product Stock': '',
-        Description: '',
-        'BOM Quantity': ''
+        'Product Name': 'Office Chair',
+        'Product SKU': 'PROD-CHAIR-001',
+        'Product Price': 2499,
+        'Finished Product Stock': 0,
+        'Product Description': 'Ergonomic office chair',
+        'Part Name': 'Chair Seat',
+        'Part SKU': 'PART-SEAT-001',
+        'Part Stock': 100,
+        'Part Min Stock': 10,
+        'Part Cost': 350,
+        'Recipe Quantity': 1
       },
       {
-        Type: 'product',
-        'Product SKU': 'PROD-KIT-001',
-        'Product Name': 'Starter Kit',
-        'Product Price': 499,
-        'Product Stock': 0,
-        Description: 'Amazon/Shopify ready product',
-        'Part SKU': 'PART-BASE-001',
+        'Product Name': 'Office Chair',
+        'Product SKU': 'PROD-CHAIR-001',
+        'Product Price': 2499,
+        'Finished Product Stock': 0,
+        'Product Description': 'Ergonomic office chair',
+        'Part Name': 'Chair Leg',
+        'Part SKU': 'PART-LEG-001',
+        'Part Stock': 400,
+        'Part Min Stock': 40,
+        'Part Cost': 90,
+        'Recipe Quantity': 4
+      },
+      {
+        'Product Name': '',
+        'Product SKU': '',
+        'Product Price': '',
+        'Finished Product Stock': '',
+        'Product Description': '',
         'Part Name': 'Packing Box',
+        'Part SKU': 'PART-BOX-001',
         'Part Stock': 250,
         'Part Min Stock': 25,
         'Part Cost': 12,
-        'BOM Quantity': 1
+        'Recipe Quantity': ''
       }
     ];
     const worksheet = XLSX.utils.json_to_sheet(rows);
@@ -1986,7 +1997,7 @@ export default function App() {
         }
 
         let partRecord = null;
-        if (hasPartData && (type !== 'product' || pickValue(row, ['part name', 'component name', 'part stock', 'part cost', 'bom quantity']))) {
+        if (hasPartData && (type !== 'product' || pickValue(row, ['part name', 'component name', 'part stock', 'part cost', 'recipe quantity', 'bom quantity']))) {
           const partPayload = {
             name: String(pickValue(row, ['part name', 'component name', 'inventory item name', 'name']) || partSku).trim(),
             sku: partSku,
@@ -2014,8 +2025,8 @@ export default function App() {
             name: String(pickValue(row, ['product name', 'title', 'name']) || productSku).trim(),
             sku: productSku,
             price: toNumber(pickValue(row, ['product price', 'price', 'variant price', 'sale price']), 0),
-            finishedStock: toNumber(pickValue(row, ['product stock', 'finished stock', 'available stock']), 0),
-            description: String(pickValue(row, ['description', 'body html', 'product description']) || '').trim()
+            finishedStock: toNumber(pickValue(row, ['finished product stock', 'product stock', 'finished stock', 'available stock']), 0),
+            description: String(pickValue(row, ['product description', 'description', 'body html']) || '').trim()
           };
           const existingProduct = productSkuMap.get(productSku.toLowerCase());
           let productRecord;
@@ -2030,7 +2041,7 @@ export default function App() {
             summary.productsCreated += 1;
           }
 
-          const bomQty = toNumber(pickValue(row, ['bom quantity', 'part quantity', 'component quantity', 'quantity per product']), 0);
+          const bomQty = toNumber(pickValue(row, ['recipe quantity', 'bom quantity', 'part quantity', 'component quantity', 'quantity per product', 'qty per product']), 0);
           if (partRecord && bomQty > 0) {
             const relationKey = `${productRecord.id}:${partRecord.id}`;
             if (!touchedProductRecipes.has(relationKey)) {
@@ -2674,8 +2685,8 @@ export default function App() {
           <div className="rounded-xl border border-blue-100 bg-blue-50 p-4 flex gap-3">
             <FileSpreadsheet size={22} className="text-blue-600 shrink-0 mt-0.5" />
             <div>
-              <h4 className="font-semibold text-slate-900">Upload products, inventory, and BOM parts</h4>
-              <p className="text-sm text-slate-600 mt-1">Use one Excel sheet for parts, finished products, and product-part quantities. SKUs are matched first, so repeat imports update existing records.</p>
+              <h4 className="font-semibold text-slate-900">Upload products, parts, and product recipes</h4>
+              <p className="text-sm text-slate-600 mt-1">Each row works like the current product form: product fields, one linked part, and the recipe quantity needed for one product. Repeat the same product SKU on multiple rows to add more parts.</p>
             </div>
           </div>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -2688,8 +2699,8 @@ export default function App() {
           <div className="rounded-xl border border-slate-200 overflow-hidden">
             <div className="bg-slate-50 px-4 py-2 text-xs font-bold uppercase text-slate-500">Supported Columns</div>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-2 p-4 text-sm text-slate-600">
-              <span>Type: product or part</span><span>Product SKU, Product Name, Price, Stock</span>
-              <span>Part SKU, Part Name, Stock, Min Stock, Cost</span><span>BOM Quantity for each product-part row</span>
+              <span>Product Name, Product SKU, Product Price</span><span>Finished Product Stock, Product Description</span>
+              <span>Part Name, Part SKU, Part Stock, Min Stock, Cost</span><span>Recipe Quantity links that part to the product</span>
             </div>
           </div>
           {importSummary?.error && <div className="rounded-lg bg-rose-50 border border-rose-100 p-3 text-sm text-rose-700">{importSummary.error}</div>}
