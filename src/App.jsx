@@ -1698,6 +1698,7 @@ export default function App() {
   const [showAddProduct, setShowAddProduct] = useState(false);
   const [showAddOrder, setShowAddOrder] = useState(false);
   const [showImportCatalog, setShowImportCatalog] = useState(false);
+  const [importMode, setImportMode] = useState('parts');
   const [showEditOrder, setShowEditOrder] = useState(false);
   const [selectedProduct, setSelectedProduct] = useState(null);
   const [editingOrder, setEditingOrder] = useState(null);
@@ -1913,52 +1914,177 @@ export default function App() {
   };
   const buildSkuMap = (items) => new Map(items.filter(item => item.sku).map(item => [String(item.sku).trim().toLowerCase(), item]));
 
-  const downloadCatalogTemplate = () => {
+  const openImportModal = (mode) => {
+    setImportMode(mode);
+    setImportSummary(null);
+    setShowImportCatalog(true);
+  };
+
+  const downloadPartsTemplate = () => {
     const rows = [
       {
-        'Product Name': 'Office Chair',
-        'Product SKU': 'PROD-CHAIR-001',
-        'Product Price': 2499,
-        'Finished Product Stock': 0,
-        'Product Description': 'Ergonomic office chair',
         'Part Name': 'Chair Seat',
-        'Part SKU': 'PART-SEAT-001',
-        'Part Stock': 100,
-        'Part Min Stock': 10,
-        'Part Cost': 350,
-        'Recipe Quantity': 1
+        'SKU': 'PART-SEAT-001',
+        'Stock': 100,
+        'Minimum Stock': 10,
+        'Price': 350
       },
       {
-        'Product Name': 'Office Chair',
-        'Product SKU': 'PROD-CHAIR-001',
-        'Product Price': 2499,
-        'Finished Product Stock': 0,
-        'Product Description': 'Ergonomic office chair',
         'Part Name': 'Chair Leg',
-        'Part SKU': 'PART-LEG-001',
-        'Part Stock': 400,
-        'Part Min Stock': 40,
-        'Part Cost': 90,
-        'Recipe Quantity': 4
-      },
+        'SKU': 'PART-LEG-001',
+        'Stock': 400,
+        'Minimum Stock': 40,
+        'Price': 90
+      }
+    ];
+    const worksheet = XLSX.utils.json_to_sheet(rows);
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, 'Parts');
+    XLSX.writeFile(workbook, 'parts-upload-template.xlsx');
+  };
+
+  const downloadProductTemplate = () => {
+    const rows = parts.length > 0 ? parts.map((part, index) => ({
+      'Product Name': index === 0 ? '' : '',
+      'Product SKU': index === 0 ? '' : '',
+      'Product Price': index === 0 ? '' : '',
+      'Finished Product Stock': index === 0 ? '' : '',
+      'Description': index === 0 ? '' : '',
+      'Part Name': part.name,
+      'Part SKU': part.sku,
+      'Part Stock': part.stock,
+      'Part Minimum Stock': part.minStock,
+      'Part Price': part.cost,
+      'Recipe Quantity': ''
+    })) : [
       {
         'Product Name': '',
         'Product SKU': '',
         'Product Price': '',
         'Finished Product Stock': '',
-        'Product Description': '',
-        'Part Name': 'Packing Box',
-        'Part SKU': 'PART-BOX-001',
-        'Part Stock': 250,
-        'Part Min Stock': 25,
-        'Part Cost': 12,
+        'Description': '',
+        'Part Name': '',
+        'Part SKU': '',
+        'Part Stock': '',
+        'Part Minimum Stock': '',
+        'Part Price': '',
         'Recipe Quantity': ''
       }
     ];
     const worksheet = XLSX.utils.json_to_sheet(rows);
     const workbook = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(workbook, worksheet, 'Catalog Upload');
-    XLSX.writeFile(workbook, 'product-inventory-template.xlsx');
+    XLSX.utils.book_append_sheet(workbook, worksheet, 'New Product Recipe');
+    XLSX.writeFile(workbook, 'new-product-recipe-template.xlsx');
+  };
+
+  const downloadCatalogTemplate = () => {
+    if (importMode === 'parts') {
+      downloadPartsTemplate();
+      return;
+    }
+    downloadProductTemplate();
+  };
+
+  const handlePartsImport = async (rows) => {
+    const partSkuMap = buildSkuMap(parts);
+    const summary = { partsCreated: 0, partsUpdated: 0, productsCreated: 0, productsUpdated: 0, recipesLinked: 0, skipped: 0 };
+
+    for (const row of rows) {
+      const partSku = String(pickValue(row, ['sku', 'part sku']) || '').trim();
+      if (!partSku) {
+        summary.skipped += 1;
+        continue;
+      }
+
+      const partPayload = {
+        name: String(pickValue(row, ['part name', 'name']) || partSku).trim(),
+        sku: partSku,
+        stock: toNumber(pickValue(row, ['stock', 'part stock']), 0),
+        minStock: toNumber(pickValue(row, ['minimum stock', 'min stock', 'part minimum stock', 'part min stock']), 0),
+        cost: toNumber(pickValue(row, ['price', 'part price', 'cost', 'part cost']), 0)
+      };
+
+      const existingPart = partSkuMap.get(partSku.toLowerCase());
+      if (existingPart) {
+        await updateDoc(dataDoc('parts', existingPart.id), partPayload);
+        summary.partsUpdated += 1;
+      } else {
+        const partRef = await addDoc(dataCollection('parts'), partPayload);
+        partSkuMap.set(partSku.toLowerCase(), { id: partRef.id, ...partPayload });
+        summary.partsCreated += 1;
+      }
+    }
+
+    return summary;
+  };
+
+  const handleProductsImport = async (rows) => {
+    const partSkuMap = buildSkuMap(parts);
+    const productSkuMap = buildSkuMap(products);
+    const touchedProductRecipes = new Set();
+    const processedProductSkus = new Set();
+    const summary = { partsCreated: 0, partsUpdated: 0, productsCreated: 0, productsUpdated: 0, recipesLinked: 0, skipped: 0 };
+    let currentProductRecord = null;
+
+    for (const row of rows) {
+      const productSku = String(pickValue(row, ['product sku', 'sku']) || '').trim();
+      const productName = String(pickValue(row, ['product name', 'name']) || '').trim();
+
+      if (productSku && processedProductSkus.has(productSku.toLowerCase())) {
+        currentProductRecord = productSkuMap.get(productSku.toLowerCase());
+      } else if (productSku) {
+        const productPayload = {
+          name: productName || productSku,
+          sku: productSku,
+          price: toNumber(pickValue(row, ['product price', 'price']), 0),
+          finishedStock: toNumber(pickValue(row, ['finished product stock', 'product stock', 'finished stock']), 0),
+          description: String(pickValue(row, ['description', 'product description']) || '').trim()
+        };
+        const existingProduct = productSkuMap.get(productSku.toLowerCase());
+        if (existingProduct) {
+          await updateDoc(dataDoc('products', existingProduct.id), productPayload);
+          currentProductRecord = { ...existingProduct, ...productPayload };
+          summary.productsUpdated += 1;
+        } else {
+          const productRef = await addDoc(dataCollection('products'), productPayload);
+          currentProductRecord = { id: productRef.id, ...productPayload };
+          productSkuMap.set(productSku.toLowerCase(), currentProductRecord);
+          summary.productsCreated += 1;
+        }
+        processedProductSkus.add(productSku.toLowerCase());
+      }
+
+      const partSku = String(pickValue(row, ['part sku']) || '').trim();
+      const recipeQty = toNumber(pickValue(row, ['recipe quantity', 'required quantity', 'component quantity', 'qty per product']), 0);
+
+      if (currentProductRecord && partSku && recipeQty > 0) {
+        const partRecord = partSkuMap.get(partSku.toLowerCase());
+        if (!partRecord) {
+          summary.skipped += 1;
+          continue;
+        }
+
+        const relationKey = `${currentProductRecord.id}:${partRecord.id}`;
+        if (!touchedProductRecipes.has(relationKey)) {
+          const existingRecipe = recipes.find(r => r.productId === currentProductRecord.id && r.partId === partRecord.id);
+          if (existingRecipe) {
+            await updateDoc(dataDoc('recipes', existingRecipe.id), { quantity: recipeQty });
+          } else {
+            await addDoc(dataCollection('recipes'), {
+              productId: currentProductRecord.id,
+              partId: partRecord.id,
+              quantity: recipeQty
+            });
+          }
+          touchedProductRecipes.add(relationKey);
+          summary.recipesLinked += 1;
+        }
+      } else if (!productSku && !partSku) {
+        summary.skipped += 1;
+      }
+    }
+
+    return summary;
   };
 
   const handleCatalogImport = async (event) => {
@@ -1979,88 +2105,9 @@ export default function App() {
         return;
       }
 
-      const partSkuMap = buildSkuMap(parts);
-      const productSkuMap = buildSkuMap(products);
-      const touchedProductRecipes = new Set();
-      const summary = { partsCreated: 0, partsUpdated: 0, productsCreated: 0, productsUpdated: 0, recipesLinked: 0, skipped: 0 };
-
-      for (const row of rows) {
-        const type = String(pickValue(row, ['type', 'item type', 'row type']) || '').trim().toLowerCase();
-        const partSku = String(pickValue(row, ['part sku', 'component sku', 'variant sku', 'sku']) || '').trim();
-        const productSku = String(pickValue(row, ['product sku', 'parent sku', 'handle', 'item sku']) || '').trim();
-        const hasPartData = Boolean(partSku);
-        const hasProductData = Boolean(productSku);
-
-        if (!hasPartData && !hasProductData) {
-          summary.skipped += 1;
-          continue;
-        }
-
-        let partRecord = null;
-        if (hasPartData && (type !== 'product' || pickValue(row, ['part name', 'component name', 'part stock', 'part cost', 'recipe quantity', 'bom quantity']))) {
-          const partPayload = {
-            name: String(pickValue(row, ['part name', 'component name', 'inventory item name', 'name']) || partSku).trim(),
-            sku: partSku,
-            stock: toNumber(pickValue(row, ['part stock', 'component stock', 'inventory', 'stock', 'quantity']), 0),
-            minStock: toNumber(pickValue(row, ['part min stock', 'min stock', 'reorder point']), 0),
-            cost: toNumber(pickValue(row, ['part cost', 'cost', 'cost per item']), 0)
-          };
-          const existingPart = partSkuMap.get(partSku.toLowerCase());
-          if (existingPart) {
-            await updateDoc(dataDoc('parts', existingPart.id), partPayload);
-            partRecord = { ...existingPart, ...partPayload };
-            summary.partsUpdated += 1;
-          } else {
-            const partRef = await addDoc(dataCollection('parts'), partPayload);
-            partRecord = { id: partRef.id, ...partPayload };
-            partSkuMap.set(partSku.toLowerCase(), partRecord);
-            summary.partsCreated += 1;
-          }
-        } else if (hasPartData) {
-          partRecord = partSkuMap.get(partSku.toLowerCase()) || null;
-        }
-
-        if (hasProductData) {
-          const productPayload = {
-            name: String(pickValue(row, ['product name', 'title', 'name']) || productSku).trim(),
-            sku: productSku,
-            price: toNumber(pickValue(row, ['product price', 'price', 'variant price', 'sale price']), 0),
-            finishedStock: toNumber(pickValue(row, ['finished product stock', 'product stock', 'finished stock', 'available stock']), 0),
-            description: String(pickValue(row, ['product description', 'description', 'body html']) || '').trim()
-          };
-          const existingProduct = productSkuMap.get(productSku.toLowerCase());
-          let productRecord;
-          if (existingProduct) {
-            await updateDoc(dataDoc('products', existingProduct.id), productPayload);
-            productRecord = { ...existingProduct, ...productPayload };
-            summary.productsUpdated += 1;
-          } else {
-            const productRef = await addDoc(dataCollection('products'), productPayload);
-            productRecord = { id: productRef.id, ...productPayload };
-            productSkuMap.set(productSku.toLowerCase(), productRecord);
-            summary.productsCreated += 1;
-          }
-
-          const bomQty = toNumber(pickValue(row, ['recipe quantity', 'bom quantity', 'part quantity', 'component quantity', 'quantity per product', 'qty per product']), 0);
-          if (partRecord && bomQty > 0) {
-            const relationKey = `${productRecord.id}:${partRecord.id}`;
-            if (!touchedProductRecipes.has(relationKey)) {
-              const existingRecipe = recipes.find(r => r.productId === productRecord.id && r.partId === partRecord.id);
-              if (existingRecipe) {
-                await updateDoc(dataDoc('recipes', existingRecipe.id), { quantity: bomQty });
-              } else {
-                await addDoc(dataCollection('recipes'), {
-                  productId: productRecord.id,
-                  partId: partRecord.id,
-                  quantity: bomQty
-                });
-              }
-              touchedProductRecipes.add(relationKey);
-              summary.recipesLinked += 1;
-            }
-          }
-        }
-      }
+      const summary = importMode === 'parts'
+        ? await handlePartsImport(rows)
+        : await handleProductsImport(rows);
 
       setImportSummary(summary);
     } catch (error) {
@@ -2481,7 +2528,7 @@ export default function App() {
     <div className="p-8 h-full flex flex-col">
       <div className="flex justify-between items-center mb-6">
         <div><h2 className="text-2xl font-bold text-slate-900">Inventory</h2><p className="text-slate-500">Manage raw materials</p></div>
-        {isAdmin && <div className="flex items-center gap-2"><button onClick={() => setShowImportCatalog(true)} className="bg-white hover:bg-slate-50 text-slate-700 border border-slate-300 px-4 py-2 rounded-lg flex items-center gap-2 font-medium shadow-sm"><Upload size={18} /> Import Excel</button><button onClick={() => setShowAddPart(true)} className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg flex items-center gap-2 font-medium shadow-sm"><Plus size={18} /> Add Part</button></div>}
+        {isAdmin && <div className="flex items-center gap-2"><button onClick={() => openImportModal('parts')} className="bg-white hover:bg-slate-50 text-slate-700 border border-slate-300 px-4 py-2 rounded-lg flex items-center gap-2 font-medium shadow-sm"><Upload size={18} /> Import Excel</button><button onClick={() => setShowAddPart(true)} className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg flex items-center gap-2 font-medium shadow-sm"><Plus size={18} /> Add Part</button></div>}
       </div>
       <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden flex-1">
         <div className="overflow-auto max-h-[calc(100vh-250px)]">
@@ -2507,7 +2554,7 @@ export default function App() {
     <div className="p-8 h-full flex flex-col">
       <div className="flex justify-between items-center mb-6">
         <div><h2 className="text-2xl font-bold text-slate-900">Products</h2><p className="text-slate-500">Assembly & BOMs</p></div>
-        {isAdmin && <div className="flex items-center gap-2"><button onClick={() => setShowImportCatalog(true)} className="bg-white hover:bg-slate-50 text-slate-700 border border-slate-300 px-4 py-2 rounded-lg flex items-center gap-2 font-medium shadow-sm"><Upload size={18} /> Import Excel</button><button onClick={() => { setNewProductRecipe([]); setShowAddProduct(true); }} className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg flex items-center gap-2 font-medium shadow-sm"><Plus size={18} /> New Product</button></div>}
+        {isAdmin && <div className="flex items-center gap-2"><button onClick={() => openImportModal('products')} className="bg-white hover:bg-slate-50 text-slate-700 border border-slate-300 px-4 py-2 rounded-lg flex items-center gap-2 font-medium shadow-sm"><Upload size={18} /> Import Excel</button><button onClick={() => { setNewProductRecipe([]); setShowAddProduct(true); }} className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg flex items-center gap-2 font-medium shadow-sm"><Plus size={18} /> New Product</button></div>}
       </div>
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
         <div className="space-y-4">
@@ -2680,15 +2727,16 @@ export default function App() {
         </div>
       </Modal>
 
-      <Modal title="Excel Catalog Import" show={showImportCatalog} onClose={() => setShowImportCatalog(false)} maxWidth="max-w-2xl">
+      <Modal title={importMode === 'parts' ? 'Parts Excel Import' : 'New Product Excel Import'} show={showImportCatalog} onClose={() => setShowImportCatalog(false)} maxWidth="max-w-2xl">
         <div className="space-y-5">
           <div className="rounded-xl border border-blue-100 bg-blue-50 p-4 flex gap-3">
             <FileSpreadsheet size={22} className="text-blue-600 shrink-0 mt-0.5" />
             <div>
-              <h4 className="font-semibold text-slate-900">Upload products, parts, and product recipes</h4>
-              <p className="text-sm text-slate-600 mt-1">Each row works like the current product form: product fields, one linked part, and the recipe quantity needed for one product. Repeat the same product SKU on multiple rows to add more parts.</p>
+              <h4 className="font-semibold text-slate-900">{importMode === 'parts' ? 'Upload parts inventory' : 'Upload products and recipes'}</h4>
+              <p className="text-sm text-slate-600 mt-1">{importMode === 'parts' ? 'Use this template to add or update parts with Part Name, SKU, Stock, Minimum Stock, and Price.' : 'The template includes all parts already added in Inventory. Fill product details on the first row, then enter Recipe Quantity only for the parts required by that product.'}</p>
             </div>
           </div>
+          {importMode === 'products' && parts.length === 0 && <div className="rounded-lg bg-amber-50 border border-amber-100 p-3 text-sm text-amber-700">Add parts first from Inventory. The product recipe template is built from your existing parts.</div>}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <button type="button" onClick={downloadCatalogTemplate} className="flex items-center justify-center gap-2 rounded-lg border border-slate-300 bg-white px-4 py-3 text-sm font-medium text-slate-700 hover:bg-slate-50"><Download size={16} /> Download Template</button>
             <label className={`flex items-center justify-center gap-2 rounded-lg px-4 py-3 text-sm font-medium text-white ${isImporting ? 'bg-slate-400' : 'bg-blue-600 hover:bg-blue-700'} cursor-pointer`}>
@@ -2699,8 +2747,17 @@ export default function App() {
           <div className="rounded-xl border border-slate-200 overflow-hidden">
             <div className="bg-slate-50 px-4 py-2 text-xs font-bold uppercase text-slate-500">Supported Columns</div>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-2 p-4 text-sm text-slate-600">
-              <span>Product Name, Product SKU, Product Price</span><span>Finished Product Stock, Product Description</span>
-              <span>Part Name, Part SKU, Part Stock, Min Stock, Cost</span><span>Recipe Quantity links that part to the product</span>
+              {importMode === 'parts' ? (
+                <>
+                  <span>Part Name</span><span>SKU</span>
+                  <span>Stock, Minimum Stock</span><span>Price</span>
+                </>
+              ) : (
+                <>
+                  <span>Product Name, Product SKU, Product Price</span><span>Finished Product Stock, Description</span>
+                  <span>Existing Part Name, Part SKU, Part Stock</span><span>Recipe Quantity links that part to the product</span>
+                </>
+              )}
             </div>
           </div>
           {importSummary?.error && <div className="rounded-lg bg-rose-50 border border-rose-100 p-3 text-sm text-rose-700">{importSummary.error}</div>}
@@ -2723,8 +2780,8 @@ export default function App() {
       <Modal title="Add New Part" show={showAddPart} onClose={() => setShowAddPart(false)}>
         <form onSubmit={handleAddPart} className="space-y-4">
           <div><label className="block text-sm font-medium text-slate-700 mb-1">Name</label><input required name="name" className="w-full rounded-lg border-slate-300 py-2 px-3" /></div>
-          <div className="grid grid-cols-2 gap-4"><div><label className="block text-sm font-medium text-slate-700 mb-1">SKU</label><input required name="sku" className="w-full rounded-lg border-slate-300 py-2 px-3" /></div><div><label className="block text-sm font-medium text-slate-700 mb-1">Cost</label><input required name="cost" type="number" step="0.01" className="w-full rounded-lg border-slate-300 py-2 px-3" /></div></div>
-          <div className="grid grid-cols-2 gap-4"><div><label className="block text-sm font-medium text-slate-700 mb-1">Stock</label><input required name="stock" type="number" className="w-full rounded-lg border-slate-300 py-2 px-3" /></div><div><label className="block text-sm font-medium text-slate-700 mb-1">Min</label><input required name="minStock" type="number" className="w-full rounded-lg border-slate-300 py-2 px-3" /></div></div>
+          <div className="grid grid-cols-2 gap-4"><div><label className="block text-sm font-medium text-slate-700 mb-1">SKU</label><input required name="sku" className="w-full rounded-lg border-slate-300 py-2 px-3" /></div><div><label className="block text-sm font-medium text-slate-700 mb-1">Price</label><input required name="cost" type="number" step="0.01" className="w-full rounded-lg border-slate-300 py-2 px-3" /></div></div>
+          <div className="grid grid-cols-2 gap-4"><div><label className="block text-sm font-medium text-slate-700 mb-1">Stock</label><input required name="stock" type="number" className="w-full rounded-lg border-slate-300 py-2 px-3" /></div><div><label className="block text-sm font-medium text-slate-700 mb-1">Minimum Stock</label><input required name="minStock" type="number" className="w-full rounded-lg border-slate-300 py-2 px-3" /></div></div>
           <button type="submit" className="w-full bg-blue-600 hover:bg-blue-700 text-white font-medium py-2.5 rounded-lg mt-2">Add Part</button>
         </form>
       </Modal>
