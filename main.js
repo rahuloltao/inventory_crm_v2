@@ -2,6 +2,8 @@ import { app, BrowserWindow } from 'electron';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
+/* global process */
+
 // 1. Fix __dirname for ES Modules (it doesn't exist by default)
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);

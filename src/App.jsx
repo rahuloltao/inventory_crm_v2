@@ -1607,7 +1607,7 @@
 // }
 
 import brandLogo from './assets/logo-black.png'; // Change 'logo.png' to your exact file name
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   LayoutDashboard,
   Package,
@@ -1634,13 +1634,15 @@ import {
   Unlock,
   Cloud,
   LogOut,
-  LogIn
+  LogIn,
+  Upload,
+  Download,
+  FileSpreadsheet
 } from 'lucide-react';
+import * as XLSX from 'xlsx';
 
 // --- FIREBASE IMPORTS ---
-import { initializeApp } from 'firebase/app';
 import {
-  getFirestore,
   collection,
   doc,
   addDoc,
@@ -1695,9 +1697,12 @@ export default function App() {
   const [showAddPart, setShowAddPart] = useState(false);
   const [showAddProduct, setShowAddProduct] = useState(false);
   const [showAddOrder, setShowAddOrder] = useState(false);
+  const [showImportCatalog, setShowImportCatalog] = useState(false);
   const [showEditOrder, setShowEditOrder] = useState(false);
   const [selectedProduct, setSelectedProduct] = useState(null);
   const [editingOrder, setEditingOrder] = useState(null);
+  const [importSummary, setImportSummary] = useState(null);
+  const [isImporting, setIsImporting] = useState(false);
 
   // Order Form State
   const [orderType, setOrderType] = useState('product');
@@ -1712,7 +1717,7 @@ export default function App() {
   // Sales Dashboard State
   const [salesView, setSalesView] = useState('year');
   const [salesFilter, setSalesFilter] = useState('all');
-  const [selectedYear, setSelectedYear] = useState(new Date().getFullYear());
+  const [selectedYear] = useState(new Date().getFullYear());
   const [selectedMonth, setSelectedMonth] = useState(null);
   const [selectedDate, setSelectedDate] = useState(null);
 
@@ -1823,8 +1828,17 @@ export default function App() {
 
   // --- LOGIC: INVENTORY & SALES ---
   const getProductAvailability = (prodId) => {
+    const product = products.find(p => p.id === prodId);
     const prodRecipe = recipes.filter(r => r.productId === prodId);
-    if (prodRecipe.length === 0) return { count: 0, status: 'No Parts Linked', isBuildable: false, limitingPart: null };
+    if (prodRecipe.length === 0) {
+      const finishedStock = Number(product?.finishedStock || 0);
+      return {
+        count: finishedStock,
+        status: finishedStock > 0 ? 'In Stock' : 'No Parts Linked',
+        isBuildable: finishedStock > 0,
+        limitingPart: null
+      };
+    }
 
     let maxBuildable = Infinity;
     let limitingPart = null;
@@ -1849,23 +1863,6 @@ export default function App() {
     };
   };
 
-  const getMissingComponents = (prodId) => {
-    const prodRecipe = recipes.filter(r => r.productId === prodId);
-    const missing = [];
-    prodRecipe.forEach(item => {
-      const part = parts.find(p => p.id === item.partId);
-      if (part && part.stock < item.quantity) {
-        missing.push({
-          name: part.name,
-          required: item.quantity,
-          available: part.stock,
-          deficit: item.quantity - part.stock
-        });
-      }
-    });
-    return missing;
-  };
-
   const getSalesData = () => {
     const filteredOrders = orders.filter(order => {
       if (salesFilter === 'all') return true;
@@ -1877,7 +1874,7 @@ export default function App() {
     const byDay = {};
 
     filteredOrders.forEach(order => {
-      const [y, m, d] = order.date.split('-');
+      const [y, m] = order.date.split('-');
       // Year
       if (!byYear[y]) byYear[y] = 0;
       byYear[y] += order.total;
@@ -1899,8 +1896,169 @@ export default function App() {
     return { byYear, byMonth, byDay };
   };
 
-  const salesData = useMemo(() => getSalesData(), [orders, selectedYear, selectedMonth, salesFilter]);
+  const salesData = getSalesData();
   const monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+  const dataCollection = (name) => collection(db, 'artifacts', appId, 'public', 'data', name);
+  const dataDoc = (name, id) => doc(db, 'artifacts', appId, 'public', 'data', name, id);
+  const toNumber = (value, fallback = 0) => {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : fallback;
+  };
+  const normalizeKey = (value) => String(value || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+  const pickValue = (row, aliases) => {
+    const entries = Object.entries(row);
+    const normalizedAliases = aliases.map(normalizeKey);
+    const match = entries.find(([key]) => normalizedAliases.includes(normalizeKey(key)));
+    return match ? match[1] : '';
+  };
+  const buildSkuMap = (items) => new Map(items.filter(item => item.sku).map(item => [String(item.sku).trim().toLowerCase(), item]));
+
+  const downloadCatalogTemplate = () => {
+    const rows = [
+      {
+        Type: 'part',
+        'Part SKU': 'PART-BASE-001',
+        'Part Name': 'Packing Box',
+        'Part Stock': 250,
+        'Part Min Stock': 25,
+        'Part Cost': 12,
+        'Product SKU': '',
+        'Product Name': '',
+        'Product Price': '',
+        'Product Stock': '',
+        Description: '',
+        'BOM Quantity': ''
+      },
+      {
+        Type: 'product',
+        'Product SKU': 'PROD-KIT-001',
+        'Product Name': 'Starter Kit',
+        'Product Price': 499,
+        'Product Stock': 0,
+        Description: 'Amazon/Shopify ready product',
+        'Part SKU': 'PART-BASE-001',
+        'Part Name': 'Packing Box',
+        'Part Stock': 250,
+        'Part Min Stock': 25,
+        'Part Cost': 12,
+        'BOM Quantity': 1
+      }
+    ];
+    const worksheet = XLSX.utils.json_to_sheet(rows);
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, 'Catalog Upload');
+    XLSX.writeFile(workbook, 'product-inventory-template.xlsx');
+  };
+
+  const handleCatalogImport = async (event) => {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!file || !isAdmin) return;
+
+    setIsImporting(true);
+    setImportSummary(null);
+
+    try {
+      const workbook = XLSX.read(await file.arrayBuffer(), { type: 'array' });
+      const worksheet = workbook.Sheets[workbook.SheetNames[0]];
+      const rows = XLSX.utils.sheet_to_json(worksheet, { defval: '' });
+
+      if (rows.length === 0) {
+        setImportSummary({ error: 'No rows found in the selected workbook.' });
+        return;
+      }
+
+      const partSkuMap = buildSkuMap(parts);
+      const productSkuMap = buildSkuMap(products);
+      const touchedProductRecipes = new Set();
+      const summary = { partsCreated: 0, partsUpdated: 0, productsCreated: 0, productsUpdated: 0, recipesLinked: 0, skipped: 0 };
+
+      for (const row of rows) {
+        const type = String(pickValue(row, ['type', 'item type', 'row type']) || '').trim().toLowerCase();
+        const partSku = String(pickValue(row, ['part sku', 'component sku', 'variant sku', 'sku']) || '').trim();
+        const productSku = String(pickValue(row, ['product sku', 'parent sku', 'handle', 'item sku']) || '').trim();
+        const hasPartData = Boolean(partSku);
+        const hasProductData = Boolean(productSku);
+
+        if (!hasPartData && !hasProductData) {
+          summary.skipped += 1;
+          continue;
+        }
+
+        let partRecord = null;
+        if (hasPartData && (type !== 'product' || pickValue(row, ['part name', 'component name', 'part stock', 'part cost', 'bom quantity']))) {
+          const partPayload = {
+            name: String(pickValue(row, ['part name', 'component name', 'inventory item name', 'name']) || partSku).trim(),
+            sku: partSku,
+            stock: toNumber(pickValue(row, ['part stock', 'component stock', 'inventory', 'stock', 'quantity']), 0),
+            minStock: toNumber(pickValue(row, ['part min stock', 'min stock', 'reorder point']), 0),
+            cost: toNumber(pickValue(row, ['part cost', 'cost', 'cost per item']), 0)
+          };
+          const existingPart = partSkuMap.get(partSku.toLowerCase());
+          if (existingPart) {
+            await updateDoc(dataDoc('parts', existingPart.id), partPayload);
+            partRecord = { ...existingPart, ...partPayload };
+            summary.partsUpdated += 1;
+          } else {
+            const partRef = await addDoc(dataCollection('parts'), partPayload);
+            partRecord = { id: partRef.id, ...partPayload };
+            partSkuMap.set(partSku.toLowerCase(), partRecord);
+            summary.partsCreated += 1;
+          }
+        } else if (hasPartData) {
+          partRecord = partSkuMap.get(partSku.toLowerCase()) || null;
+        }
+
+        if (hasProductData) {
+          const productPayload = {
+            name: String(pickValue(row, ['product name', 'title', 'name']) || productSku).trim(),
+            sku: productSku,
+            price: toNumber(pickValue(row, ['product price', 'price', 'variant price', 'sale price']), 0),
+            finishedStock: toNumber(pickValue(row, ['product stock', 'finished stock', 'available stock']), 0),
+            description: String(pickValue(row, ['description', 'body html', 'product description']) || '').trim()
+          };
+          const existingProduct = productSkuMap.get(productSku.toLowerCase());
+          let productRecord;
+          if (existingProduct) {
+            await updateDoc(dataDoc('products', existingProduct.id), productPayload);
+            productRecord = { ...existingProduct, ...productPayload };
+            summary.productsUpdated += 1;
+          } else {
+            const productRef = await addDoc(dataCollection('products'), productPayload);
+            productRecord = { id: productRef.id, ...productPayload };
+            productSkuMap.set(productSku.toLowerCase(), productRecord);
+            summary.productsCreated += 1;
+          }
+
+          const bomQty = toNumber(pickValue(row, ['bom quantity', 'part quantity', 'component quantity', 'quantity per product']), 0);
+          if (partRecord && bomQty > 0) {
+            const relationKey = `${productRecord.id}:${partRecord.id}`;
+            if (!touchedProductRecipes.has(relationKey)) {
+              const existingRecipe = recipes.find(r => r.productId === productRecord.id && r.partId === partRecord.id);
+              if (existingRecipe) {
+                await updateDoc(dataDoc('recipes', existingRecipe.id), { quantity: bomQty });
+              } else {
+                await addDoc(dataCollection('recipes'), {
+                  productId: productRecord.id,
+                  partId: partRecord.id,
+                  quantity: bomQty
+                });
+              }
+              touchedProductRecipes.add(relationKey);
+              summary.recipesLinked += 1;
+            }
+          }
+        }
+      }
+
+      setImportSummary(summary);
+    } catch (error) {
+      console.error('Catalog import failed:', error);
+      setImportSummary({ error: `Import failed: ${error.message}` });
+    } finally {
+      setIsImporting(false);
+    }
+  };
 
   // --- ACTIONS (FIRESTORE) ---
   const handleAddPart = async (e) => {
@@ -1955,6 +2113,7 @@ export default function App() {
       name: formData.get('name'),
       sku: formData.get('sku'),
       price: parseFloat(formData.get('price')),
+      finishedStock: parseInt(formData.get('finishedStock') || '0'),
       description: formData.get('description')
     });
 
@@ -2022,9 +2181,14 @@ export default function App() {
         for (const item of order.items) {
           if (item.type === 'product') {
             const prodRecipe = recipes.filter(r => r.productId === item.itemId);
-            for (const r of prodRecipe) {
-              const part = parts.find(p => p.id === r.partId);
-              if (part) await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'parts', part.id), { stock: part.stock + (r.quantity * item.qty) });
+            if (prodRecipe.length > 0) {
+              for (const r of prodRecipe) {
+                const part = parts.find(p => p.id === r.partId);
+                if (part) await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'parts', part.id), { stock: part.stock + (r.quantity * item.qty) });
+              }
+            } else {
+              const product = products.find(p => p.id === item.itemId);
+              if (product) await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'products', product.id), { finishedStock: Number(product.finishedStock || 0) + item.qty });
             }
           } else {
             const part = parts.find(p => p.id === item.itemId);
@@ -2044,6 +2208,9 @@ export default function App() {
     const itemId = formData.get('itemId');
     const qty = parseInt(formData.get('quantity'));
     const customer = formData.get('customer');
+    const externalOrderId = String(formData.get('externalOrderId') || '').trim();
+    const shippingCompany = String(formData.get('shippingCompany') || '').trim();
+    const trackingId = String(formData.get('trackingId') || '').trim();
 
     let total = 0;
     let itemName = '';
@@ -2058,13 +2225,19 @@ export default function App() {
       }
 
       const prodRecipe = recipes.filter(r => r.productId === itemId);
-      for (const r of prodRecipe) {
-        const part = parts.find(p => p.id === r.partId);
-        if (part) {
-          await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'parts', part.id), {
-            stock: part.stock - (r.quantity * qty)
-          });
+      if (prodRecipe.length > 0) {
+        for (const r of prodRecipe) {
+          const part = parts.find(p => p.id === r.partId);
+          if (part) {
+            await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'parts', part.id), {
+              stock: part.stock - (r.quantity * qty)
+            });
+          }
         }
+      } else {
+        await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'products', product.id), {
+          finishedStock: Math.max(0, Number(product.finishedStock || 0) - qty)
+        });
       }
       total = product.price * qty;
       itemName = product.name;
@@ -2085,6 +2258,9 @@ export default function App() {
     await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'orders'), {
       customer,
       date: today,
+      externalOrderId,
+      shippingCompany,
+      trackingId,
       total: total,
       status: 'Completed',
       items: [{ name: itemName, type: type, qty: qty, itemId: itemId }]
@@ -2100,6 +2276,9 @@ export default function App() {
     const newDate = formData.get('date');
     const newTotal = parseFloat(formData.get('total'));
     const newQty = parseInt(formData.get('quantity'));
+    const externalOrderId = String(formData.get('externalOrderId') || '').trim();
+    const shippingCompany = String(formData.get('shippingCompany') || '').trim();
+    const trackingId = String(formData.get('trackingId') || '').trim();
 
     const oldOrder = editingOrder;
     const oldItem = oldOrder.items[0];
@@ -2117,9 +2296,15 @@ export default function App() {
               return;
             }
           }
-          for (const r of prodRecipe) {
-            const part = parts.find(p => p.id === r.partId);
-            if (part) await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'parts', part.id), { stock: part.stock - (r.quantity * qtyDiff) });
+          if (prodRecipe.length > 0) {
+            for (const r of prodRecipe) {
+              const part = parts.find(p => p.id === r.partId);
+              if (part) await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'parts', part.id), { stock: part.stock - (r.quantity * qtyDiff) });
+            }
+          } else {
+            await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'products', product.id), {
+              finishedStock: Math.max(0, Number(product.finishedStock || 0) - qtyDiff)
+            });
           }
         }
       } else {
@@ -2137,6 +2322,9 @@ export default function App() {
     await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'orders', editingOrder.id), {
       customer: newCustomer,
       date: newDate,
+      externalOrderId,
+      shippingCompany,
+      trackingId,
       total: newTotal,
       editedAt: new Date().toLocaleString(),
       items: [{ ...oldItem, qty: newQty }]
@@ -2155,7 +2343,7 @@ export default function App() {
         : 'text-slate-500 hover:bg-slate-50 hover:text-slate-900'
         }`}
     >
-      <Icon size={20} />
+      {React.createElement(Icon, { size: 20 })}
       <span className="font-medium">{label}</span>
     </button>
   );
@@ -2163,6 +2351,7 @@ export default function App() {
   const StatusBadge = ({ status }) => {
     const styles = {
       'Complete': 'bg-emerald-100 text-emerald-700 ring-emerald-600/20',
+      'In Stock': 'bg-emerald-100 text-emerald-700 ring-emerald-600/20',
       'Incomplete': 'bg-rose-100 text-rose-700 ring-rose-600/20',
       'No Parts Linked': 'bg-slate-100 text-slate-700 ring-slate-600/20',
       'Completed': 'bg-blue-100 text-blue-700 ring-blue-600/20',
@@ -2281,7 +2470,7 @@ export default function App() {
     <div className="p-8 h-full flex flex-col">
       <div className="flex justify-between items-center mb-6">
         <div><h2 className="text-2xl font-bold text-slate-900">Inventory</h2><p className="text-slate-500">Manage raw materials</p></div>
-        {isAdmin && <button onClick={() => setShowAddPart(true)} className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg flex items-center gap-2 font-medium shadow-sm"><Plus size={18} /> Add Part</button>}
+        {isAdmin && <div className="flex items-center gap-2"><button onClick={() => setShowImportCatalog(true)} className="bg-white hover:bg-slate-50 text-slate-700 border border-slate-300 px-4 py-2 rounded-lg flex items-center gap-2 font-medium shadow-sm"><Upload size={18} /> Import Excel</button><button onClick={() => setShowAddPart(true)} className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg flex items-center gap-2 font-medium shadow-sm"><Plus size={18} /> Add Part</button></div>}
       </div>
       <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden flex-1">
         <div className="overflow-auto max-h-[calc(100vh-250px)]">
@@ -2307,7 +2496,7 @@ export default function App() {
     <div className="p-8 h-full flex flex-col">
       <div className="flex justify-between items-center mb-6">
         <div><h2 className="text-2xl font-bold text-slate-900">Products</h2><p className="text-slate-500">Assembly & BOMs</p></div>
-        {isAdmin && <button onClick={() => { setNewProductRecipe([]); setShowAddProduct(true); }} className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg flex items-center gap-2 font-medium shadow-sm"><Plus size={18} /> New Product</button>}
+        {isAdmin && <div className="flex items-center gap-2"><button onClick={() => setShowImportCatalog(true)} className="bg-white hover:bg-slate-50 text-slate-700 border border-slate-300 px-4 py-2 rounded-lg flex items-center gap-2 font-medium shadow-sm"><Upload size={18} /> Import Excel</button><button onClick={() => { setNewProductRecipe([]); setShowAddProduct(true); }} className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg flex items-center gap-2 font-medium shadow-sm"><Plus size={18} /> New Product</button></div>}
       </div>
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
         <div className="space-y-4">
@@ -2341,6 +2530,7 @@ export default function App() {
                       </div>
                     );
                   })}
+                  {recipes.filter(r => r.productId === selectedProduct.id).length === 0 && <div className="px-4 py-5 text-sm text-slate-500">Finished stock: <span className="font-semibold text-slate-900">{Number(selectedProduct.finishedStock || 0)}</span> units</div>}
                 </div>
                 {isAdmin && <div className="bg-slate-50 p-4 border-t border-slate-200 flex gap-2"><select id="partSelect" className="flex-1 text-sm rounded-md border-slate-300 py-2 pl-3">{parts.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select><input id="qtyInput" type="number" className="w-20 text-sm rounded-md border-slate-300 py-2 pl-3" defaultValue={1} /><button onClick={() => { const pid = document.getElementById('partSelect').value; const qty = parseFloat(document.getElementById('qtyInput').value); if (pid && qty) addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'recipes'), { productId: selectedProduct.id, partId: pid, quantity: qty }); }} className="bg-white border border-slate-300 hover:bg-slate-100 text-slate-700 px-3 py-2 rounded-md"><Plus size={16} /></button></div>}
               </div>
@@ -2359,12 +2549,14 @@ export default function App() {
       </div>
       <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden flex-1">
         <table className="w-full text-left text-sm text-slate-600">
-          <thead className="bg-slate-50 text-xs uppercase font-semibold text-slate-500"><tr><th className="px-6 py-4">Customer</th><th className="px-6 py-4">Items</th><th className="px-6 py-4 text-right">Total</th><th className="px-6 py-4 text-center">Actions</th></tr></thead>
+          <thead className="bg-slate-50 text-xs uppercase font-semibold text-slate-500"><tr><th className="px-6 py-4">Customer</th><th className="px-6 py-4">Order</th><th className="px-6 py-4">Items</th><th className="px-6 py-4">Shipping</th><th className="px-6 py-4 text-right">Total</th><th className="px-6 py-4 text-center">Actions</th></tr></thead>
           <tbody className="divide-y divide-slate-100">
             {orders.map(order => (
               <tr key={order.id} className="hover:bg-slate-50 group">
-                <td className="px-6 py-4"><div className="font-medium text-slate-900">{order.customer}</div><div className="text-xs text-slate-400">#{order.id}</div></td>
+                <td className="px-6 py-4"><div className="font-medium text-slate-900">{order.customer}</div><div className="text-xs text-slate-400">{order.date}</div></td>
+                <td className="px-6 py-4"><div className="font-mono text-xs text-slate-700">{order.externalOrderId || order.id}</div><div className="text-[11px] text-slate-400">Internal #{order.id}</div></td>
                 <td className="px-6 py-4">{order.items.map((item, idx) => <div key={idx} className="flex items-center gap-2"><span className={`w-1.5 h-1.5 rounded-full ${item.type === 'product' ? 'bg-indigo-500' : 'bg-orange-500'}`}></span>{item.qty}x {item.name}</div>)}</td>
+                <td className="px-6 py-4"><div className="font-medium text-slate-700">{order.shippingCompany || '-'}</div><div className="text-xs text-slate-400 font-mono">{order.trackingId || ''}</div></td>
                 <td className="px-6 py-4 text-right font-mono font-medium">₹{order.total.toFixed(2)}</td>
                 <td className="px-6 py-4 text-center">{isAdmin && <div className="flex justify-center gap-2 opacity-0 group-hover:opacity-100"><button onClick={() => { setEditingOrder(order); setShowEditOrder(true); }} className="p-1.5 hover:bg-blue-50 text-blue-600 rounded"><Edit3 size={16} /></button><button onClick={() => setDeleteConfig({ type: 'order', id: order.id, name: 'Order', data: order })} className="p-1.5 hover:bg-rose-50 text-rose-600 rounded"><Trash2 size={16} /></button></div>}</td>
               </tr>
@@ -2387,11 +2579,11 @@ export default function App() {
     </div>
   );
 
-  const Modal = ({ title, show, onClose, children }) => {
+  const Modal = ({ title, show, onClose, children, maxWidth = 'max-w-md' }) => {
     if (!show) return null;
     return (
       <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-in fade-in zoom-in-95 duration-200">
-        <div className="bg-white rounded-2xl shadow-xl w-full max-w-md overflow-hidden">
+        <div className={`bg-white rounded-2xl shadow-xl w-full ${maxWidth} overflow-hidden`}>
           <div className="px-6 py-4 border-b border-slate-100 flex justify-between items-center bg-slate-50"><h3 className="font-semibold text-slate-900">{title}</h3><button onClick={onClose} className="text-slate-400 hover:text-slate-600"><X size={20} /></button></div>
           <div className="p-6">{children}</div>
         </div>
@@ -2477,6 +2669,45 @@ export default function App() {
         </div>
       </Modal>
 
+      <Modal title="Excel Catalog Import" show={showImportCatalog} onClose={() => setShowImportCatalog(false)} maxWidth="max-w-2xl">
+        <div className="space-y-5">
+          <div className="rounded-xl border border-blue-100 bg-blue-50 p-4 flex gap-3">
+            <FileSpreadsheet size={22} className="text-blue-600 shrink-0 mt-0.5" />
+            <div>
+              <h4 className="font-semibold text-slate-900">Upload products, inventory, and BOM parts</h4>
+              <p className="text-sm text-slate-600 mt-1">Use one Excel sheet for parts, finished products, and product-part quantities. SKUs are matched first, so repeat imports update existing records.</p>
+            </div>
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <button type="button" onClick={downloadCatalogTemplate} className="flex items-center justify-center gap-2 rounded-lg border border-slate-300 bg-white px-4 py-3 text-sm font-medium text-slate-700 hover:bg-slate-50"><Download size={16} /> Download Template</button>
+            <label className={`flex items-center justify-center gap-2 rounded-lg px-4 py-3 text-sm font-medium text-white ${isImporting ? 'bg-slate-400' : 'bg-blue-600 hover:bg-blue-700'} cursor-pointer`}>
+              <Upload size={16} /> {isImporting ? 'Importing...' : 'Upload Excel'}
+              <input type="file" accept=".xlsx,.xls,.csv" onChange={handleCatalogImport} disabled={isImporting} className="hidden" />
+            </label>
+          </div>
+          <div className="rounded-xl border border-slate-200 overflow-hidden">
+            <div className="bg-slate-50 px-4 py-2 text-xs font-bold uppercase text-slate-500">Supported Columns</div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-2 p-4 text-sm text-slate-600">
+              <span>Type: product or part</span><span>Product SKU, Product Name, Price, Stock</span>
+              <span>Part SKU, Part Name, Stock, Min Stock, Cost</span><span>BOM Quantity for each product-part row</span>
+            </div>
+          </div>
+          {importSummary?.error && <div className="rounded-lg bg-rose-50 border border-rose-100 p-3 text-sm text-rose-700">{importSummary.error}</div>}
+          {importSummary && !importSummary.error && (
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 text-center">
+              {[
+                ['Parts Created', importSummary.partsCreated],
+                ['Parts Updated', importSummary.partsUpdated],
+                ['Products Created', importSummary.productsCreated],
+                ['Products Updated', importSummary.productsUpdated],
+                ['BOM Links', importSummary.recipesLinked],
+                ['Skipped Rows', importSummary.skipped]
+              ].map(([label, value]) => <div key={label} className="rounded-lg bg-slate-50 border border-slate-200 p-3"><div className="text-xl font-bold text-slate-900">{value}</div><div className="text-xs text-slate-500">{label}</div></div>)}
+            </div>
+          )}
+        </div>
+      </Modal>
+
       {/* CRUD MODALS */}
       <Modal title="Add New Part" show={showAddPart} onClose={() => setShowAddPart(false)}>
         <form onSubmit={handleAddPart} className="space-y-4">
@@ -2491,6 +2722,7 @@ export default function App() {
         <form onSubmit={handleAddProduct} className="space-y-4">
           <div><label className="block text-sm font-medium text-slate-700 mb-1">Name</label><input required name="name" className="w-full rounded-lg border-slate-300 py-2 px-3" /></div>
           <div className="grid grid-cols-2 gap-4"><div><label className="block text-sm font-medium text-slate-700 mb-1">SKU</label><input required name="sku" className="w-full rounded-lg border-slate-300 py-2 px-3" /></div><div><label className="block text-sm font-medium text-slate-700 mb-1">Price</label><input required name="price" type="number" step="0.01" className="w-full rounded-lg border-slate-300 py-2 px-3" /></div></div>
+          <div><label className="block text-sm font-medium text-slate-700 mb-1">Finished Product Stock</label><input name="finishedStock" type="number" min="0" className="w-full rounded-lg border-slate-300 py-2 px-3" defaultValue="0" /></div>
           <div><label className="block text-sm font-medium text-slate-700 mb-1">Description</label><textarea name="description" className="w-full rounded-lg border-slate-300 py-2 px-3" rows="2"></textarea></div>
           <div className="bg-slate-50 p-4 rounded-lg border border-slate-200"><label className="block text-xs font-bold text-slate-500 uppercase mb-2">Recipe</label><div className="space-y-2 mb-3">{newProductRecipe.map((p, idx) => <div key={idx} className="flex justify-between items-center text-sm bg-white p-2 border border-slate-200 rounded"><span>{p.quantity}x {p.name}</span></div>)}</div><div className="flex gap-2"><select id="newProdPart" className="flex-1 text-sm rounded-md border-slate-300 py-1.5 px-2">{parts.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select><input id="newProdQty" type="number" className="w-16 text-sm rounded-md border-slate-300 py-1.5 px-2" defaultValue={1} /><button type="button" onClick={handleAddToRecipeDraft} className="bg-slate-200 px-3 rounded-md text-xs font-bold">Add</button></div></div>
           <button type="submit" className="w-full bg-blue-600 hover:bg-blue-700 text-white font-medium py-2.5 rounded-lg mt-2">Create Product</button>
@@ -2501,6 +2733,8 @@ export default function App() {
         <form onSubmit={handleCreateOrder} className="space-y-4">
           <div className="flex gap-2 p-1 bg-slate-100 rounded-lg"><button type="button" onClick={() => setOrderType('product')} className={`flex-1 py-1.5 text-sm font-medium rounded-md transition-all ${orderType === 'product' ? 'bg-white shadow-sm text-blue-600' : 'text-slate-500'}`}>Product</button><button type="button" onClick={() => setOrderType('part')} className={`flex-1 py-1.5 text-sm font-medium rounded-md transition-all ${orderType === 'part' ? 'bg-white shadow-sm text-blue-600' : 'text-slate-500'}`}>Part</button></div>
           <div><label className="block text-sm font-medium text-slate-700 mb-1">Customer</label><input required name="customer" className="w-full rounded-lg border-slate-300 py-2 px-3" /></div>
+          <div><label className="block text-sm font-medium text-slate-700 mb-1">Order ID</label><input name="externalOrderId" className="w-full rounded-lg border-slate-300 py-2 px-3" placeholder="Marketplace or sales sheet ID" /></div>
+          <div className="grid grid-cols-2 gap-4"><div><label className="block text-sm font-medium text-slate-700 mb-1">Shipping Company</label><input name="shippingCompany" className="w-full rounded-lg border-slate-300 py-2 px-3" placeholder="Delhivery, Blue Dart..." /></div><div><label className="block text-sm font-medium text-slate-700 mb-1">Tracking ID</label><input name="trackingId" className="w-full rounded-lg border-slate-300 py-2 px-3" /></div></div>
           <div><label className="block text-sm font-medium text-slate-700 mb-1">Select Item</label><select name="itemId" className="w-full rounded-lg border-slate-300 py-2 px-3">{orderType === 'product' ? products.map(p => <option key={p.id} value={p.id} disabled={!getProductAvailability(p.id).isBuildable}>{p.name} (₹{p.price})</option>) : parts.map(p => <option key={p.id} value={p.id} disabled={p.stock === 0}>{p.name}</option>)}</select></div>
           <div><label className="block text-sm font-medium text-slate-700 mb-1">Quantity</label><input required name="quantity" type="number" min="1" className="w-full rounded-lg border-slate-300 py-2 px-3" defaultValue="1" /></div>
           <button type="submit" className="w-full bg-blue-600 hover:bg-blue-700 text-white font-medium py-2.5 rounded-lg mt-2">Confirm Order</button>
@@ -2508,7 +2742,7 @@ export default function App() {
       </Modal>
 
       <Modal title={`Edit Order #${editingOrder?.id}`} show={showEditOrder} onClose={() => setShowEditOrder(false)}>
-        {editingOrder && <form onSubmit={handleSaveEditOrder} className="space-y-4"><div><label className="block text-sm font-medium text-slate-700 mb-1">Customer</label><input required name="customer" defaultValue={editingOrder.customer} className="w-full rounded-lg border-slate-300 py-2 px-3" /></div><div className="grid grid-cols-2 gap-4"><div><label className="block text-sm font-medium text-slate-700 mb-1">Date</label><input required name="date" type="date" defaultValue={editingOrder.date} className="w-full rounded-lg border-slate-300 py-2 px-3" /></div><div><label className="block text-sm font-medium text-slate-700 mb-1">Total</label><input required name="total" type="number" step="0.01" defaultValue={editingOrder.total} className="w-full rounded-lg border-slate-300 py-2 px-3" /></div></div><div className="bg-slate-50 p-4 rounded-lg border border-slate-200"><label className="block text-xs font-bold text-slate-500 uppercase mb-2">Item Quantity</label>{editingOrder.items.map((item, idx) => <div key={idx} className="flex justify-between items-center text-sm mb-2"><span className="font-medium text-slate-700">{item.name}</span><input name="quantity" type="number" min="1" defaultValue={item.qty} className="w-16 rounded-md border-slate-300 py-1 px-2 text-right" /></div>)}</div><button type="submit" className="w-full bg-blue-600 hover:bg-blue-700 text-white font-medium py-2.5 rounded-lg mt-2">Save Changes</button></form>}
+        {editingOrder && <form onSubmit={handleSaveEditOrder} className="space-y-4"><div><label className="block text-sm font-medium text-slate-700 mb-1">Customer</label><input required name="customer" defaultValue={editingOrder.customer} className="w-full rounded-lg border-slate-300 py-2 px-3" /></div><div><label className="block text-sm font-medium text-slate-700 mb-1">Order ID</label><input name="externalOrderId" defaultValue={editingOrder.externalOrderId || ''} className="w-full rounded-lg border-slate-300 py-2 px-3" /></div><div className="grid grid-cols-2 gap-4"><div><label className="block text-sm font-medium text-slate-700 mb-1">Shipping Company</label><input name="shippingCompany" defaultValue={editingOrder.shippingCompany || ''} className="w-full rounded-lg border-slate-300 py-2 px-3" /></div><div><label className="block text-sm font-medium text-slate-700 mb-1">Tracking ID</label><input name="trackingId" defaultValue={editingOrder.trackingId || ''} className="w-full rounded-lg border-slate-300 py-2 px-3" /></div></div><div className="grid grid-cols-2 gap-4"><div><label className="block text-sm font-medium text-slate-700 mb-1">Date</label><input required name="date" type="date" defaultValue={editingOrder.date} className="w-full rounded-lg border-slate-300 py-2 px-3" /></div><div><label className="block text-sm font-medium text-slate-700 mb-1">Total</label><input required name="total" type="number" step="0.01" defaultValue={editingOrder.total} className="w-full rounded-lg border-slate-300 py-2 px-3" /></div></div><div className="bg-slate-50 p-4 rounded-lg border border-slate-200"><label className="block text-xs font-bold text-slate-500 uppercase mb-2">Item Quantity</label>{editingOrder.items.map((item, idx) => <div key={idx} className="flex justify-between items-center text-sm mb-2"><span className="font-medium text-slate-700">{item.name}</span><input name="quantity" type="number" min="1" defaultValue={item.qty} className="w-16 rounded-md border-slate-300 py-1 px-2 text-right" /></div>)}</div><button type="submit" className="w-full bg-blue-600 hover:bg-blue-700 text-white font-medium py-2.5 rounded-lg mt-2">Save Changes</button></form>}
       </Modal>
 
       <Modal title="Confirm Deletion" show={!!deleteConfig} onClose={() => setDeleteConfig(null)}>
